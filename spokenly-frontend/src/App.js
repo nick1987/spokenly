@@ -12,56 +12,6 @@ function getSpeakerColor(speakerId) {
   return speakerColors[speakerId % speakerColors.length];
 }
 
-// NEW: Floating Bubble Component
-const FloatingBubble = ({ text, position, onClose, timestamp, confidence }) => {
-  const bubbleRef = useRef(null);
-  
-  useEffect(() => {
-    // Auto-remove bubble after 10 seconds
-    const timer = setTimeout(() => {
-      onClose();
-    }, 10000);
-    
-    return () => clearTimeout(timer);
-  }, [onClose]);
-  
-  return (
-    <div 
-      ref={bubbleRef}
-      className="floating-bubble"
-      style={{
-        left: position.x,
-        top: position.y,
-        animation: 'bubbleFloat 0.5s ease-out'
-      }}
-    >
-      <div className="bubble-header">
-        <span className="bubble-timestamp">{timestamp}</span>
-        <span className="bubble-confidence">{Math.round(confidence * 100)}%</span>
-        <button className="bubble-close" onClick={onClose}>×</button>
-      </div>
-      <div className="bubble-content">{text}</div>
-    </div>
-  );
-};
-
-// NEW: Word counting utility
-const countWords = (text) => {
-  return text.trim().split(/\s+/).filter(word => word.length > 0).length;
-};
-
-// NEW: Generate random position for floating bubbles
-const generateBubblePosition = () => {
-  const margin = 50;
-  const maxX = window.innerWidth - 300 - margin;
-  const maxY = window.innerHeight - 150 - margin;
-  
-  return {
-    x: Math.max(margin, Math.random() * maxX),
-    y: Math.max(margin, Math.random() * maxY)
-  };
-};
-
 function getInitialSessionId() {
   // If already generated, return the existing one
   if (globalSessionId) {
@@ -106,16 +56,6 @@ const App = () => {
   const [autoScroll, setAutoScroll] = useState(true);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
-  
-  // NEW: Voice transcription mode features
-  const [transcriptionMode, setTranscriptionMode] = useState(false);
-  const [floatingBubbles, setFloatingBubbles] = useState([]);
-  const [wordChunkSize, setWordChunkSize] = useState(15); // 10-20 words
-  const [bubblePositions, setBubblePositions] = useState([]);
-  const [currentWordCount, setCurrentWordCount] = useState(0);
-  const [currentChunk, setCurrentChunk] = useState('');
-  const [isTranscribingWhileCoding, setIsTranscribingWhileCoding] = useState(false);
-  
   // Replace sessionId state with a ref
   const sessionIdRef = useRef(getInitialSessionId());
   const sessionId = sessionIdRef.current;
@@ -140,6 +80,10 @@ const App = () => {
     }
     return false;
   });
+  
+  // Transcript monitoring
+  const [lastTranscriptTime, setLastTranscriptTime] = useState(0);
+  const transcriptTimeoutRef = useRef(null);
   
   const mediaRecorderRef = useRef(null);
   const websocketRef = useRef(null);
@@ -180,36 +124,24 @@ const App = () => {
       case 'transcript': {
         console.log('[WebSocket] Received transcript:', data);
         
-        // NEW: Handle word-based chunking for transcription mode
-        if (transcriptionMode && data.is_final) {
-          const newText = data.text;
-          const currentText = currentChunk + ' ' + newText;
-          const wordCount = countWords(currentText);
-          
-          setCurrentChunk(currentText);
-          setCurrentWordCount(wordCount);
-          
-          // Create floating bubble when word count reaches chunk size
-          if (wordCount >= wordChunkSize) {
-            const bubbleId = Date.now() + Math.random();
-            const position = generateBubblePosition();
-            
-            setFloatingBubbles(prev => [...prev, {
-              id: bubbleId,
-              text: currentText.trim(),
-              position,
-              timestamp: new Date(data.timestamp * 1000).toLocaleTimeString(),
-              confidence: data.confidence || 0
-            }]);
-            
-            // Reset for next chunk
-            setCurrentChunk('');
-            setCurrentWordCount(0);
-          }
+        // Update last transcript time
+        setLastTranscriptTime(Date.now());
+        
+        // Clear any existing timeout
+        if (transcriptTimeoutRef.current) {
+          clearTimeout(transcriptTimeoutRef.current);
         }
         
+        // Set a timeout to detect if transcripts stop
+        transcriptTimeoutRef.current = setTimeout(() => {
+          console.warn('⚠️ No transcripts received for 5 seconds - possible issue');
+          if (isRecording) {
+            console.log('🔍 Checking audio and connection status...');
+          }
+        }, 5000);
+        
+        // Always add the transcript, regardless of final status
         setTranscriptChunks(prev => {
-          const last = prev[prev.length - 1];
           const newChunk = {
             id: Date.now() + Math.random(),
             text: data.text,
@@ -222,26 +154,15 @@ const App = () => {
             speakerColor: getSpeakerColor(data.speaker)
           };
 
-          // Always show interim results as the last chunk
-          if (!data.is_final) {
-            if (last && !last.isFinal) {
-              // Update the last interim chunk
-              return [...prev.slice(0, -1), newChunk];
-            } else {
-              // Add new interim chunk
-              return [...prev, newChunk];
-            }
+          // Simplified logic: always add new transcripts
+          // Only replace the last chunk if it's an interim update
+          const last = prev[prev.length - 1];
+          if (last && !last.isFinal && !data.is_final) {
+            // Update the last interim chunk
+            return [...prev.slice(0, -1), newChunk];
           } else {
-            // Finalized: if last is interim, replace it with final
-            if (last && !last.isFinal) {
-              return [...prev.slice(0, -1), { ...newChunk, isFinal: true }];
-            }
-            // If last is already final and matches, skip (dedup)
-            if (last && last.isFinal && last.text === data.text) {
-              return prev;
-            }
-            // Otherwise, add as new finalized chunk
-            return [...prev, { ...newChunk, isFinal: true }];
+            // Add as new chunk
+            return [...prev, newChunk];
           }
         });
         break;
@@ -252,7 +173,7 @@ const App = () => {
       default:
         break;
     }
-  }, [transcriptionMode, currentChunk, wordChunkSize]);
+  }, []);
 
   // WebSocket connection management
   const connectWebSocket = useCallback((userId = null) => {
@@ -506,6 +427,12 @@ const App = () => {
       recordingTimerRef.current = null;
     }
 
+    // Clear transcript monitoring
+    if (transcriptTimeoutRef.current) {
+      clearTimeout(transcriptTimeoutRef.current);
+      transcriptTimeoutRef.current = null;
+    }
+
     setIsRecording(false);
     setAudioLevel(0);
     setRecordingTime(0);
@@ -695,61 +622,6 @@ const App = () => {
         </div>
       </div>
 
-      {/* NEW: Transcription Mode Controls */}
-      <div className="transcription-mode-section">
-        <div className="mode-toggle">
-          <label className="mode-label">
-            <input 
-              type="checkbox" 
-              checked={transcriptionMode}
-              onChange={(e) => setTranscriptionMode(e.target.checked)}
-              className="mode-checkbox"
-            />
-            <span className="mode-text">🎯 Voice Transcription Mode</span>
-          </label>
-        </div>
-        
-        {transcriptionMode && (
-          <div className="transcription-options">
-            <div className="control-group">
-              <label>Word Chunk Size:</label>
-              <div className="chunk-controls">
-                <button 
-                  className="control-btn"
-                  onClick={() => setWordChunkSize(Math.max(10, wordChunkSize - 1))}
-                  disabled={wordChunkSize <= 10}
-                >
-                  -
-                </button>
-                <span className="control-value">{wordChunkSize} words</span>
-                <button 
-                  className="control-btn"
-                  onClick={() => setWordChunkSize(Math.min(20, wordChunkSize + 1))}
-                  disabled={wordChunkSize >= 20}
-                >
-                  +
-                </button>
-              </div>
-            </div>
-            
-            <div className="control-group">
-              <label>Current Words:</label>
-              <span className="word-counter">{currentWordCount}/{wordChunkSize}</span>
-            </div>
-            
-            <div className="control-group">
-              <label>Continue While Coding:</label>
-              <button 
-                className={`toggle-btn ${isTranscribingWhileCoding ? 'active' : ''}`}
-                onClick={() => setIsTranscribingWhileCoding(!isTranscribingWhileCoding)}
-              >
-                {isTranscribingWhileCoding ? 'ON' : 'OFF'}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Customizable Controls */}
       <div className="controls-section">
         <div className="control-group">
@@ -859,18 +731,6 @@ const App = () => {
           </div>
         </div>
       )}
-
-      {/* NEW: Floating Bubbles */}
-      {transcriptionMode && floatingBubbles.map(bubble => (
-        <FloatingBubble
-          key={bubble.id}
-          text={bubble.text}
-          position={bubble.position}
-          timestamp={bubble.timestamp}
-          confidence={bubble.confidence}
-          onClose={() => setFloatingBubbles(prev => prev.filter(b => b.id !== bubble.id))}
-        />
-      ))}
 
       {/* Error Display */}
       {error && (
