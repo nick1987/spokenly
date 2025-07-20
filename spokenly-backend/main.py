@@ -466,10 +466,12 @@ class AudioProcessor:
                     transcript_data = self._extract_transcript(response)
                     if transcript_data:
                         logger.info(f"Extracted transcript data: {transcript_data}")
+                        
                         # Always send both interim and final transcripts to the frontend
                         # Only add finalized transcripts to session history
                         if transcript_data["is_final"]:
                             manager.add_transcript_to_session(session_id, transcript_data)
+                            logger.info(f"Added final transcript to session history: {transcript_data['text']}")
 
                         # Prepare transcript message for frontend
                         transcript_message = {
@@ -485,16 +487,21 @@ class AudioProcessor:
                         }
 
                         # Debug: log every transcript sent to frontend
-                        logger.info(f"[LIVE TRANSCRIPT] Session {session_id} | Final: {transcript_data['is_final']} | Text: {transcript_data['text']}")
+                        logger.info(f"[LIVE TRANSCRIPT] Session {session_id} | Final: {transcript_data['is_final']} | Text: '{transcript_data['text']}' | Confidence: {transcript_data['confidence']}")
 
-                        # Send to the original websocket (recorder)
-                        await websocket.send_json(transcript_message)
-                        logger.info(f"Sent transcript to recorder for session {session_id}")
-
-                        # Broadcast to other connections for the same session (excluding the sender)
-                        await manager.broadcast_to_session(transcript_message, session_id, exclude_websocket=websocket)
+                        try:
+                            # Send to the original websocket (recorder)
+                            await websocket.send_json(transcript_message)
+                            logger.info(f"✅ Successfully sent transcript to recorder for session {session_id}")
+                            
+                            # Broadcast to other connections for the same session (excluding the sender)
+                            await manager.broadcast_to_session(transcript_message, session_id, exclude_websocket=websocket)
+                        except Exception as e:
+                            logger.error(f"❌ Failed to send transcript to frontend: {e}")
                     else:
                         logger.info(f"No transcript data extracted from response: {response}")
+                        # Log the full response for debugging
+                        logger.debug(f"Full Deepgram response: {response}")
                         
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse Deepgram response: {e}")
@@ -509,21 +516,35 @@ class AudioProcessor:
     def _extract_transcript(self, response: dict) -> Optional[dict]:
         """Extract enhanced transcript information from Deepgram response."""
         try:
-            # Only process transcript responses, skip metadata
-            if response.get("type") == "Metadata":
+            # Log all response types for debugging
+            response_type = response.get("type")
+            logger.info(f"Processing Deepgram response type: {response_type}")
+            
+            # Only process Results responses, skip metadata
+            if response_type == "Metadata":
+                logger.info("Skipping metadata response")
                 return None
             
-            channel = response.get("channel", {})
-            alternatives = channel.get("alternatives", [])
-            
-            if not alternatives:
-                return None
-            
-            alternative = alternatives[0]
-            transcript_text = alternative.get("transcript", "")
-            
-            if not transcript_text.strip():
-                return None
+            # Handle Results responses
+            if response_type == "Results":
+                channel = response.get("channel", {})
+                alternatives = channel.get("alternatives", [])
+                
+                if not alternatives:
+                    logger.info("No alternatives found in response")
+                    return None
+                
+                alternative = alternatives[0]
+                transcript_text = alternative.get("transcript", "")
+                
+                # Allow empty transcripts for interim results
+                if not transcript_text and not response.get("is_final", False):
+                    logger.info("Empty interim transcript - allowing for continuation")
+                    return None
+                
+                if not transcript_text.strip():
+                    logger.info("Empty transcript text - skipping")
+                    return None
             
             # Extract speaker information if available
             speaker = None
