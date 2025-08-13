@@ -3,7 +3,6 @@
 A real-time speech-to-text application with live transcription capabilities using React frontend and FastAPI backend with Deepgram integration.
 
 ## 🚀 Features
-
 - **Real-time Speech Recognition**: Live audio transcription using Deepgram API
 - **WebSocket Communication**: Seamless real-time communication between frontend and backend
 - **Audio Processing**: Raw PCM audio capture and processing
