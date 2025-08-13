@@ -204,19 +204,7 @@ class AudioProcessor:
                 logger.info(f"Deepgram connection opened for session {session_id}.")
 
             async def on_message(cls,result: LiveResultResponse, **kwargs):
-                logger.info(f" on_message ".center( 80 , "=" ) )
-                
-                logger.info(f" Result Data ".center( 80 , "-" ) )
-                logger.info(result)
-                logger.info(f"-"*80)
-
                 transcript_data = self._extract_transcript(result)
-                
-                logger.info(f" Transcipt Data ".center( 80 , "~" ) )
-                logger.info(transcript_data)
-                logger.info(f"~"*80)
-
-                logger.info(f"=" * 80)
 
                 if transcript_data:
                     if transcript_data["is_final"]:
@@ -224,19 +212,12 @@ class AudioProcessor:
                     await manager.broadcast_to_session(transcript_data, session_id)
 
             async def on_metadata(cls, metadata: MetadataResponse, **kwargs):
-                logger.info(f" on_metadata ".center( 80 , "=" ) )
-                logger.info(metadata)
-                logger.info(f"=" * 80)
                 logger.info(f"Deepgram metadata received for session {session_id}: {metadata}")
 
             async def on_utterance_end(cls, utterance_end: UtteranceEndResponse, **kwargs):
-                logger.info(f" on_metadata ".center( 80 , "=" ) )
-                logger.info(utterance_end)
-                logger.info(f"=" * 80)
                 await manager.broadcast_to_session({"type": "utterance_end"}, session_id)
 
             async def on_error(cls, error: DeepgramError, **kwargs):
-                logger.error(f"Deepgram error for session {session_id}: {error}")
                 await manager.broadcast_to_session({"type": "error", "message": str(error)}, session_id)
 
             async def on_close(cls, close, **kwargs):
