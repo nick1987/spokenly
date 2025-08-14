@@ -25,12 +25,16 @@ from deepgram.clients.listen.v1.websocket import (
 )
 
 # FastAPI imports
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic_settings import BaseSettings
 from pydantic import Field
 import logging
+
+# Firebase imports
+from firebase_admin.auth import UserRecord
+from firebase_config import get_current_user, verify_firebase_token
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Set the lowest level to capture all messages.
@@ -61,6 +65,10 @@ class Settings(BaseSettings):
     deepgram_model: str = Field("nova-2", env="DEEPGRAM_MODEL")
     max_connections_per_user: int = Field(50, env="MAX_CONNECTIONS_PER_USER")
     connection_timeout: int = Field(30, env="CONNECTION_TIMEOUT")
+    
+    # Firebase settings
+    firebase_service_account_path: str = Field("", env="FIREBASE_SERVICE_ACCOUNT_PATH")
+    firebase_project_id: str = Field("", env="FIREBASE_PROJECT_ID")
     
     # Audio processing settings
     sample_rate: int = Field(16000, env="SAMPLE_RATE")
@@ -100,8 +108,9 @@ class ConnectionManager:
         self.active_connections: Dict[str, Set[WebSocket]] = {}
         self.connection_metadata: Dict[WebSocket, Dict] = {}
         self.session_transcripts: Dict[str, list] = {}
+        self.user_sessions: Dict[str, Set[str]] = {}  # user_id -> set of session_ids
 
-    async def connect(self, websocket: WebSocket, session_id: str = "anonymous", role: str = "recorder"):
+    async def connect(self, websocket: WebSocket, session_id: str = "anonymous", role: str = "recorder", user_id: str = None):
         """Accept a new WebSocket connection and track it."""
         await websocket.accept()
         
@@ -116,10 +125,17 @@ class ConnectionManager:
         self.connection_metadata[websocket] = {
             "session_id": session_id,
             "role": role,
+            "user_id": user_id,
             "connected_at": time.time(),
         }
         
-        logger.info(f"New {role} connection for session {session_id}. Total connections: {len(self.active_connections[session_id])}")
+        # Track user sessions
+        if user_id:
+            if user_id not in self.user_sessions:
+                self.user_sessions[user_id] = set()
+            self.user_sessions[user_id].add(session_id)
+        
+        logger.info(f"New {role} connection for session {session_id} (user: {user_id or 'anonymous'}). Total connections: {len(self.active_connections[session_id])}")
         return True
 
     def disconnect(self, websocket: WebSocket):
@@ -128,6 +144,7 @@ class ConnectionManager:
         if metadata:
             session_id = metadata["session_id"]
             role = metadata["role"]
+            user_id = metadata.get("user_id")
             if session_id in self.active_connections:
                 self.active_connections[session_id].discard(websocket)
                 if not self.active_connections[session_id]:
@@ -317,7 +334,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -326,6 +343,27 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"message": "Spokenly Backend (SDK Version) is running"}
+
+@app.get("/auth/me")
+async def get_current_user_info(current_user: UserRecord = Depends(get_current_user)):
+    """Get current authenticated user information."""
+    return {
+        "uid": current_user.uid,
+        "email": current_user.email,
+        "display_name": current_user.display_name,
+        "photo_url": current_user.photo_url,
+        "email_verified": current_user.email_verified,
+        "created_at": current_user.user_metadata.creation_timestamp if current_user.user_metadata else None
+    }
+
+@app.get("/auth/verify")
+async def verify_token(current_user: UserRecord = Depends(get_current_user)):
+    """Verify if the current token is valid."""
+    return {
+        "valid": True,
+        "user_id": current_user.uid,
+        "email": current_user.email
+    }
 
 @app.get("/health")
 async def health_check():
@@ -338,9 +376,23 @@ async def health_check():
     }
 
 @app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str = "recorder"):
+async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str = "recorder", token: str = None):
     """Main WebSocket endpoint for audio streaming and transcription."""
-    if not await manager.connect(websocket, session_id, role):
+    user_id = None
+    
+    # Verify authentication if token is provided
+    if token:
+        try:
+            from firebase_admin import auth
+            decoded_token = auth.verify_id_token(token)
+            user_id = decoded_token['uid']
+            logger.info(f"Authenticated user {user_id} connecting to session {session_id}")
+        except Exception as e:
+            logger.error(f"Token verification failed: {e}")
+            await websocket.close(code=4001, reason="Authentication failed")
+            return
+    
+    if not await manager.connect(websocket, session_id, role, user_id):
         return
 
     try:
@@ -375,6 +427,26 @@ async def get_session_transcripts(session_id: str):
         "transcripts": transcripts
     }
 
+@app.get("/user/sessions")
+async def get_user_sessions(current_user: UserRecord = Depends(get_current_user)):
+    """Get all sessions for the authenticated user."""
+    user_id = current_user.uid
+    user_session_ids = manager.user_sessions.get(user_id, set())
+    
+    sessions = []
+    for session_id in user_session_ids:
+        transcripts = manager.session_transcripts.get(session_id, [])
+        sessions.append({
+            "session_id": session_id,
+            "transcript_count": len(transcripts),
+            "last_activity": transcripts[-1]["timestamp"] if transcripts else None
+        })
+    
+    return {
+        "user_id": user_id,
+        "sessions": sessions
+    }
+
 @app.get("/languages")
 async def get_supported_languages():
     """Get list of supported languages and dialects."""
@@ -394,7 +466,6 @@ async def get_audio_settings():
         "enable_noise_reduction": settings.enable_noise_reduction,
         "enable_audio_enhancement": settings.enable_audio_enhancement,
         "deepgram_model": settings.deepgram_model,
-        "deepgram_tier": settings.deepgram_tier,
         "audio_processing_available": AUDIO_PROCESSING_AVAILABLE
     }
 

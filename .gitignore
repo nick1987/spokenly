@@ -93,4 +93,13 @@ jspm_packages/
 
 # Temporary files
 *.tmp
-*.temp 
+*.temp
+
+# Firebase
+spokenlyServiceAccountKey.json
+*.json
+!package.json
+!package-lock.json
+!manifest.json
+!tsconfig.json
+!jsconfig.json 

@@ -9,4 +9,7 @@ scipy==1.11.4
 librosa==0.10.1
 soundfile==0.12.1
 webrtcvad==2.0.10
-deepgram-sdk==0.3.0
+deepgram-sdk>=4.0.0
+firebase-admin==6.2.0
+python-multipart==0.0.6
+aiohttp==3.10.10
