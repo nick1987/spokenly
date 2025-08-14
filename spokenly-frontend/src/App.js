@@ -55,8 +55,8 @@ const App = () => {
   const [audioLevel, setAudioLevel] = useState(0);
   const [recordingTime, setRecordingTime] = useState(0);
 
-  // Settings State
-  const [chunkSize, setChunkSize] = useState(40);
+  // Settings State - Ultra-Low Latency (Always Prioritize Speed)
+  const [chunkSize, setChunkSize] = useState(10); // Ultra-low latency chunk size
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -90,29 +90,35 @@ const App = () => {
   const handleWebSocketMessage = useCallback((data) => {
     switch (data.type) {
       case 'transcript': {
-        // This handles the live updates for the *current* sentence.
+        // Ultra-low latency handling - always show interim results immediately
         if (data.is_final) {
-          setCompletedText(prev => (prev ? prev + ' ' : '') + data.text)
-          // The transcription service has finalized this part of the sentence.
+          // Final result - confirm the utterance and add to history
           utteranceRef.current.confirmed += ` ${data.text}`;
-          utteranceRef.current.interim = ''; // The interim prediction is now confirmed.
-
+          utteranceRef.current.interim = ''; // Clear interim as it's now confirmed
+          
+          // Update completed text with final result
+          setCompletedText(prev => (prev ? prev + ' ' : '') + data.text);
         } else {
-          // This is a temporary, predictive part.
-          const newPart = data.text.substring(utteranceRef.current.confirmed.length);
+          // Interim result - show immediately for ultra-low latency
+          // Calculate only the new part that hasn't been confirmed yet
+          const confirmedLength = utteranceRef.current.confirmed.length;
+          const newPart = data.text.substring(confirmedLength);
           utteranceRef.current.interim = newPart;
+          
+          // Show interim results immediately in the current utterance
+          // This provides the most responsive experience
         }
-        // Update the UI with the latest state of the current sentence.
+        // Update the UI immediately
         setCurrentUtterance({ ...utteranceRef.current });
         break;
       }
 
       case 'utterance_end': {
-        // The speaker has paused, so the current sentence is considered complete.
-        const finishedUtterance = utteranceRef.current.confirmed;
+        // Enhanced utterance end handling for lower latency
+        const finishedUtterance = utteranceRef.current.confirmed + utteranceRef.current.interim;
 
         if (finishedUtterance.trim()) {
-          // Add the completed sentence to our history array.
+          // Add the completed sentence (including any interim text) to our history array.
           setTranscriptHistory(prevHistory => [...prevHistory, finishedUtterance]);
         }
 
@@ -120,6 +126,9 @@ const App = () => {
         const resetUtterance = { confirmed: '', interim: '' };
         utteranceRef.current = resetUtterance;
         setCurrentUtterance(resetUtterance);
+        
+        // Clear completed text to start fresh
+        setCompletedText('');
         break;
       }
 
@@ -218,10 +227,10 @@ const App = () => {
         }
       };
 
-      // Audio processing for WebSocket
+      // Audio processing for WebSocket - Optimized for Low Latency
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       const audioSource = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const processor = audioContext.createScriptProcessor(1024, 1, 1); // Reduced buffer size from 4096 to 1024 for lower latency
 
       processor.onaudioprocess = (event) => {
         if (websocketRef.current?.readyState === WebSocket.OPEN) {
@@ -269,20 +278,26 @@ const App = () => {
     setRecordingTime(0);
   }, []);
 
-  const copyTranscript = useCallback((text) => {
-    navigator.clipboard.writeText(text).then(() => {
-      // Could add a toast notification here
-      console.log('Transcript copied to clipboard');
-    });
-  }, []);
+
 
   // --- Utility & Lifecycle ---
   const generateShareLink = useCallback(() => {
-    const fullTranscript = [...transcriptHistory, currentUtterance.confirmed].join(' ');
+    // Include both final and interim results in share link
+    const finalTranscripts = transcriptHistory.map(text => ({ text, type: 'final', timestamp: new Date().toLocaleTimeString() }));
+    const currentInterim = currentUtterance.interim ? [{ text: currentUtterance.interim, type: 'interim', timestamp: new Date().toLocaleTimeString() }] : [];
+    const currentFinal = currentUtterance.confirmed ? [{ text: currentUtterance.confirmed, type: 'final', timestamp: new Date().toLocaleTimeString() }] : [];
+    
     const shareData = {
       sessionId: sessionId,
-      transcripts: [{ text: fullTranscript, timestamp: new Date().toLocaleTimeString() }],
-      settings: { chunkSize, playbackSpeed, autoScroll },
+      transcripts: [...finalTranscripts, ...currentFinal, ...currentInterim],
+      settings: { 
+        chunkSize, 
+        playbackSpeed, 
+        autoScroll,
+        latencyMode: 'ultra-low',
+        interimResults: true
+      },
+      mode: 'ultra-low-latency'
     };
     const encodedData = btoa(JSON.stringify(shareData));
     return `${window.location.origin}${window.location.pathname}?share=${encodedData}`;
@@ -303,11 +318,22 @@ const App = () => {
       try {
         const decodedData = JSON.parse(atob(shareData));
         if (decodedData.transcripts && decodedData.transcripts.length > 0) {
-          // Simple load: split by sentences. A more robust solution might be needed.
-          setTranscriptHistory(decodedData.transcripts[0].text.split('. ').filter(Boolean));
+          // Handle new format with type distinction
+          const finalTranscripts = decodedData.transcripts
+            .filter(t => t.type === 'final')
+            .map(t => t.text);
+          setTranscriptHistory(finalTranscripts);
+          
+          // Handle interim results if present
+          const interimTranscripts = decodedData.transcripts
+            .filter(t => t.type === 'interim');
+          if (interimTranscripts.length > 0) {
+            const latestInterim = interimTranscripts[interimTranscripts.length - 1];
+            setCurrentUtterance({ confirmed: '', interim: latestInterim.text });
+          }
         }
         if (decodedData.settings) {
-          setChunkSize(decodedData.settings.chunkSize || 40);
+          setChunkSize(decodedData.settings.chunkSize || 10);
           setPlaybackSpeed(decodedData.settings.playbackSpeed || 1);
           setAutoScroll(decodedData.settings.autoScroll !== false);
         }
@@ -324,7 +350,7 @@ const App = () => {
   };
 
   const handleChunkChange = (amount) => {
-    setChunkSize(prev => Math.max(10, Math.min(100, prev + amount)));
+    setChunkSize(prev => Math.max(5, Math.min(50, prev + amount))); // Ultra-low latency range
   }
 
   useEffect(() => {
@@ -368,9 +394,9 @@ const App = () => {
           <div className="control-group">
             <label>Chunk Size (ms)</label>
             <div className="chunk-controls">
-              <button className="control-btn" onClick={() => handleChunkChange(-10)} disabled={chunkSize <= 10}>-</button>
+              <button className="control-btn" onClick={() => handleChunkChange(-5)} disabled={chunkSize <= 5}>-</button>
               <span className="control-value">{chunkSize}</span>
-              <button className="control-btn" onClick={() => handleChunkChange(10)} disabled={chunkSize >= 100}>+</button>
+              <button className="control-btn" onClick={() => handleChunkChange(5)} disabled={chunkSize >= 50}>+</button>
             </div>
           </div>
           <div className="control-group">
@@ -443,13 +469,6 @@ const App = () => {
               e.g., <span className="speaker-dot" style={{ backgroundColor: item.speakerColor }}></span> 
             */}
                     <span className="transcript-text">{text}</span>
-                    <button
-                      className="copy-transcript-btn"
-                      onClick={() => copyTranscript(text)}
-                      title="Copy transcript"
-                    >
-                      📋
-                    </button>
                   </div>
                   {/* NOTE: The metadata section (timestamps, confidence, etc.) is omitted.
             This data is not available in the new `transcriptHistory` array of strings.
@@ -459,28 +478,24 @@ const App = () => {
               </div>
             ))}
 
-            {/* Render the current, live transcript */}
+            {/* Render the current, live transcript with ultra-low latency */}
             {(currentUtterance.confirmed || currentUtterance.interim) && (
               <div className="transcript-card interim">
                 <div className="transcript-number">{transcriptHistory.length + 1}</div>
                 <div className="transcript-content">
                   <div className="transcript-header">
                     <span className="transcript-text">
-                      {/* This preserves your new logic for displaying confirmed vs. interim text */}
-                      <span>{currentUtterance.confirmed ? (completedText ? " " : "") + currentUtterance.confirmed : ""}</span>
-                      <span className="interim-text">{currentUtterance.interim}</span>
-                      <span>&nbsp;</span>
-                    </span>
-                    <button
-                      className="copy-transcript-btn"
-                      onClick={() => copyTranscript(
-                        `${currentUtterance.confirmed || ''} ${currentUtterance.interim || ''}`.trim()
-                      )}
-                      title="Copy transcript"
-                    >
-                      📋
-                    </button>
-                  </div>
+                                    {/* Show confirmed text normally */}
+              <span className="confirmed-text">{currentUtterance.confirmed || ""}</span>
+              {/* Show interim text with special styling for ultra-low latency */}
+              {currentUtterance.interim && (
+                <span className="interim-text-live">
+                  {currentUtterance.interim}
+                </span>
+              )}
+              <span>&nbsp;</span>
+            </span>
+          </div>
                 </div>
               </div>
             )}

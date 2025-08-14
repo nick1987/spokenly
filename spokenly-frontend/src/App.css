@@ -304,6 +304,49 @@ body {
   background: #45a049;
 }
 
+/* Profile Selector */
+.profile-selector {
+  padding: 6px 12px;
+  background: #3a3a3a;
+  color: #ccc;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 200px;
+}
+
+.profile-selector:hover {
+  background: #4a4a4a;
+  color: white;
+  border-color: #5a5a5a;
+}
+
+.profile-selector:focus {
+  outline: none;
+  border-color: #4CAF50;
+  background: #4a4a4a;
+  color: white;
+}
+
+.profile-selector option {
+  background: #2a2a2a;
+  color: #ccc;
+  padding: 8px;
+}
+
+/* Ultra-Low Latency Styling */
+.confirmed-text {
+  color: #fff;
+}
+
+.interim-text-live {
+  color: #ffd700;
+  font-weight: 500;
+}
+
 /* Share Section */
 .share-section {
   display: flex;
@@ -468,6 +511,8 @@ body {
   flex: 1;
   padding: 20px;
   overflow-y: auto;
+  display: flex;
+  justify-content: center;
 }
 
 .empty-state {
@@ -483,6 +528,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 15px;
+  max-width: 800px;
+  width: 100%;
 }
 
 /* Transcript Cards */
@@ -531,12 +578,14 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .transcript-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
+  min-width: 0;
 }
 
 .speaker-dot {
@@ -553,7 +602,10 @@ body {
 .transcript-text {
   color: #fff;
   font-size: 16px;
-  line-height: 1.5;
+  line-height: 1.6;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .transcript-timestamp {
@@ -602,20 +654,7 @@ body {
   white-space: nowrap;
 }
 
-.copy-transcript-btn {
-  background: none;
-  border: none;
-  color: #888;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
 
-.copy-transcript-btn:hover {
-  background: #3a3a3a;
-  color: #fff;
-}
 
 /* Responsive Design */
 @media (max-width: 768px) {
@@ -672,7 +711,7 @@ body {
 
 @media (max-width: 600px) {
   .transcripts-list {
-    max-width: 98vw;
+    max-width: 95vw;
   }
   .transcript-card {
     font-size: 1.2rem;

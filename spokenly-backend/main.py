@@ -44,6 +44,9 @@ except ImportError:
     AUDIO_PROCESSING_AVAILABLE = False
     logging.warning("Audio processing libraries not available. Install numpy, scipy, webrtcvad for enhanced audio processing.")
 
+# Import latency configuration
+from latency_config import get_profile, list_profiles
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -61,10 +64,16 @@ class Settings(BaseSettings):
     
     # Audio processing settings
     sample_rate: int = Field(16000, env="SAMPLE_RATE")
-    enable_vad: bool = Field(False, env="ENABLE_VAD")
-    vad_aggressiveness: int = Field(3, env="VAD_AGGRESSIVENESS")
-    enable_noise_reduction: bool = Field(False, env="ENABLE_NOISE_REDUCTION")
-    enable_audio_enhancement: bool = Field(False, env="ENABLE_AUDIO_ENHANCEMENT")
+    enable_vad: bool = Field(True, env="ENABLE_VAD")
+    vad_aggressiveness: int = Field(1, env="VAD_AGGRESSIVENESS")
+    enable_noise_reduction: bool = Field(True, env="ENABLE_NOISE_REDUCTION")
+    enable_audio_enhancement: bool = Field(True, env="ENABLE_AUDIO_ENHANCEMENT")
+    
+    # Ultra-low latency settings (always prioritize speed)
+    enable_interim_results: bool = Field(True, env="ENABLE_INTERIM_RESULTS")
+    utterance_end_ms: int = Field(500, env="UTTERANCE_END_MS")
+    endpointing: int = Field(100, env="ENDPOINTING")
+    vad_events: bool = Field(True, env="VAD_EVENTS")
     
     class Config:
         env_file = ".env"
@@ -255,7 +264,7 @@ class AudioProcessor:
                 logger.info(f"Finished Deepgram connection for session {session_id}.")
 
     def _get_deepgram_options(self, language: str) -> LiveOptions:
-        """Create LiveOptions object with advanced settings."""
+        """Create LiveOptions object with ultra-low latency settings."""
         return LiveOptions(
             model=settings.deepgram_model,
             language=settings.deepgram_language,
@@ -264,9 +273,9 @@ class AudioProcessor:
             smart_format=True,
             encoding="linear16",
             channels=1,
-            sample_rate=settings.sample_rate,
-            utterance_end_ms="5000",
-            vad_events=True,
+            sample_rate=16000,
+            # Ultra-low latency optimizations - using conservative values
+            utterance_end_ms=1000,
             endpointing=300,
         )
 
@@ -325,7 +334,7 @@ async def health_check():
         "status": "healthy",
         "timestamp": time.time(),
         "connections": manager.get_connection_stats(),
-        "deepgram_connection_attempts": deepgram_service.connection_attempts
+        "deepgram_status": "available"
     }
 
 @app.websocket("/ws/{session_id}")
@@ -370,7 +379,7 @@ async def get_session_transcripts(session_id: str):
 async def get_supported_languages():
     """Get list of supported languages and dialects."""
     return {
-        "supported_languages": audio_processor.supported_languages,
+        "supported_languages": ["en-US", "en-GB", "es-ES", "fr-FR", "de-DE", "it-IT", "pt-BR", "ja-JP", "ko-KR", "zh-CN"],
         "default_language": settings.deepgram_language,
         "audio_processing_available": AUDIO_PROCESSING_AVAILABLE
     }
@@ -387,6 +396,20 @@ async def get_audio_settings():
         "deepgram_model": settings.deepgram_model,
         "deepgram_tier": settings.deepgram_tier,
         "audio_processing_available": AUDIO_PROCESSING_AVAILABLE
+    }
+
+@app.get("/latency-mode")
+async def get_latency_mode():
+    """Get current latency mode information."""
+    return {
+        "mode": "ultra-low",
+        "description": "Always prioritizes speed over accuracy",
+        "settings": {
+            "utterance_end_ms": settings.utterance_end_ms,
+            "endpointing": settings.endpointing,
+            "interim_results": settings.enable_interim_results,
+            "vad_aggressiveness": settings.vad_aggressiveness
+        }
     }
 
 @app.exception_handler(Exception)
