@@ -103,7 +103,7 @@ const App = () => {
           // Calculate only the new part that hasn't been confirmed yet
           const confirmedLength = utteranceRef.current.confirmed.length;
           const newPart = data.text.substring(confirmedLength);
-          utteranceRef.current.interim = newPart;
+          utteranceRef.current.interim = ` ${data.text}`;
           
           // Show interim results immediately in the current utterance
           // This provides the most responsive experience
