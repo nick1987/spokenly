@@ -2,8 +2,10 @@ import asyncio
 import json
 import logging
 import os
+
 import time
 import numpy as np
+
 from typing import Dict, Optional, Set, List
 
 # Deepgram SDK imports
@@ -74,7 +76,8 @@ class Settings(BaseSettings):
     utterance_end_ms: int = Field(500, env="UTTERANCE_END_MS")
     endpointing: int = Field(100, env="ENDPOINTING")
     vad_events: bool = Field(True, env="VAD_EVENTS")
-    
+    chunk_size : int = Field(100, env="CHUNK_SIZE")
+
     class Config:
         env_file = ".env"
         extra = "ignore"
@@ -113,10 +116,11 @@ class ConnectionManager:
             return False
         
         self.active_connections[session_id].add(websocket)
+
         self.connection_metadata[websocket] = {
             "session_id": session_id,
             "role": role,
-            "connected_at": time.time(),
+            "connected_at": time.time()
         }
         
         logger.info(f"New {role} connection for session {session_id}. Total connections: {len(self.active_connections[session_id])}")
@@ -152,12 +156,10 @@ class ConnectionManager:
             
         disconnected_websockets = []
         for websocket in self.active_connections[session_id]:
-            logger.info( "Found WebSocket:" )
             if exclude_websocket and websocket == exclude_websocket:
                 continue
                 
             try:
-                logger.info( f"Sending message : {json.dumps(message)}" )
                 await websocket.send_json(message)
             except Exception as e:
                 logger.error(f"Failed to broadcast message to session {session_id}: {e}")
@@ -196,12 +198,13 @@ class AudioProcessor:
     """Handles audio processing and transcription logic using Deepgram SDK."""
     
     def __init__(self):
+        self._current_chunk_size = 0
         # This class is kept for structure, but processing is currently bypassed.
         pass
 
     async def process_audio_stream(self, websocket: WebSocket, session_id: str):
         """Process incoming audio stream using Deepgram SDK."""
-        
+
         dg_connection = None
         try:
             # STEP 1: Create a Deepgram LiveTranscription connection with advanced options
@@ -217,13 +220,23 @@ class AudioProcessor:
 
                 if transcript_data:
                     if transcript_data["is_final"]:
+                        # update the chunk size
+                        self._current_chunk_size += len( transcript_data.get( "text" , "" ).split(" ") )
                         manager.add_transcript_to_session(session_id, transcript_data)
                     await manager.broadcast_to_session(transcript_data, session_id)
+
+                    if( self._current_chunk_size >= settings.chunk_size ):
+                        manager.add_transcript_to_session(session_id, { "utterance_end" : True })
+                        await manager.broadcast_to_session({"type": "utterance_end"}, session_id)
+
+                        self._current_chunk_size = 0
 
             async def on_metadata(cls, metadata: MetadataResponse, **kwargs):
                 logger.info(f"Deepgram metadata received for session {session_id}: {metadata}")
 
             async def on_utterance_end(cls, utterance_end: UtteranceEndResponse, **kwargs):
+                self._current_chunk_size = 0
+                manager.add_transcript_to_session(session_id, { "utterance_end" : True })
                 await manager.broadcast_to_session({"type": "utterance_end"}, session_id)
 
             async def on_error(cls, error: DeepgramError, **kwargs):
@@ -282,8 +295,6 @@ class AudioProcessor:
     def _extract_transcript(self, response: LiveResultResponse) -> Optional[dict]:
         """Extract enhanced transcript information from Deepgram SDK response."""
         # *** FIX: Only process 'Results' type messages ***
-        logger.info( "in _extract_transcript" )
-
         if response.type != 'Results':
             return None
             
@@ -375,6 +386,33 @@ async def get_session_transcripts(session_id: str):
         "transcripts": transcripts
     }
 
+@app.get("/transcripts_history/{session_id}")
+async def get_session_transcripts_history(session_id: str):
+    """Get transcript history for a specific session."""
+    transcripts = manager.session_transcripts.get(session_id, [])
+
+    res_transcripts = []
+    curr_transcripts = []
+    for transcript in transcripts:
+        if transcript.get( "type" , "" ) == "transcript" and transcript.get( "is_final" , False ) == True:
+            curr_transcripts.append( transcript.get( 'text' , '' ) )
+        
+        if "utterance_end" in transcript:
+            res_transcripts.append( { "text" : " ".join( curr_transcripts ) , "type" : "final" } )
+            curr_transcripts = []
+    
+    return {
+        "sessionId": session_id,
+        "transcripts": res_transcripts,
+        "settings": {
+            "chunkSize": settings.chunk_size,
+            "playbackSpeed": 1,
+            "autoScroll": True,
+            "latencyMode": "ultra-low",
+            "interimResults": True
+        },
+    }
+
 @app.get("/languages")
 async def get_supported_languages():
     """Get list of supported languages and dialects."""
@@ -420,7 +458,21 @@ async def global_exception_handler(request, exc):
         status_code=500,
         content={"detail": "Internal server error"}
     )
-    
+
+@app.put("/settings")
+async def update_settings(data:dict):
+    if "chunk_size" in data:
+        try:
+            settings.chunk_size = int( data.get( "chunk_size" ) )
+        except:
+            pass
+        
+    return {}
+
+@app.get("/settings")
+async def get_settings():
+    return settings
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

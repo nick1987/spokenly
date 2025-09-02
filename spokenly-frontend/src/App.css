@@ -49,7 +49,8 @@ body {
 }
 
 /* Recording Buttons */
-.start-button, .stop-button {
+.start-button,
+.stop-button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -89,7 +90,8 @@ body {
   transform: translateY(-1px);
 }
 
-.mic-icon, .stop-icon {
+.mic-icon,
+.stop-icon {
   font-size: 16px;
 }
 
@@ -109,9 +111,17 @@ body {
 }
 
 @keyframes pulse {
-  0% { opacity: 1; }
-  50% { opacity: 0.5; }
-  100% { opacity: 1; }
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+
+  100% {
+    opacity: 1;
+  }
 }
 
 /* Recording Progress */
@@ -552,11 +562,13 @@ body {
 .transcript-card.final {
   background: #2a2a2a;
   border-color: #4a4a4a;
+  border-left: 6px solid rgb(173, 0, 17);
 }
 
 .transcript-card.interim {
   background: #3a3a3a;
   border-color: #ffd700;
+  border-left: 6px solid rgb(0, 173, 0);
 }
 
 .transcript-number {
@@ -595,9 +607,17 @@ body {
   flex-shrink: 0;
 }
 
-.speaker-dot.orange { background: #ff8c00; }
-.speaker-dot.green { background: #32cd32; }
-.speaker-dot.blue { background: #4169e1; }
+.speaker-dot.orange {
+  background: #ff8c00;
+}
+
+.speaker-dot.green {
+  background: #32cd32;
+}
+
+.speaker-dot.blue {
+  background: #4169e1;
+}
 
 .transcript-text {
   color: #fff;
@@ -654,6 +674,19 @@ body {
   white-space: nowrap;
 }
 
+.stick-top {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background: #1e1e1e;
+  /* dark background to match */
+  border-bottom: 1px solid #3a3a3a;
+  /* subtle divider */
+  padding-bottom: 10px;
+}
+
+
+
 
 
 /* Responsive Design */
@@ -662,48 +695,48 @@ body {
     flex-direction: column;
     gap: 15px;
   }
-  
+
   .control-right {
     align-items: flex-start;
     flex-direction: row;
     gap: 15px;
   }
-  
+
   .progress-bar {
     width: 150px;
   }
-  
+
   .controls-section {
     flex-direction: column;
     gap: 15px;
     padding: 15px;
   }
-  
+
   .control-group {
     width: 100%;
     justify-content: space-between;
   }
-  
+
   .transcript-card {
     padding: 12px;
     gap: 12px;
   }
-  
+
   .transcript-number {
     width: 25px;
     height: 25px;
     font-size: 12px;
   }
-  
+
   .transcript-text {
     font-size: 13px;
   }
-  
+
   .modal-content {
     padding: 20px;
     margin: 20px;
   }
-  
+
   .share-url {
     flex-direction: column;
   }
@@ -713,6 +746,7 @@ body {
   .transcripts-list {
     max-width: 95vw;
   }
+
   .transcript-card {
     font-size: 1.2rem;
     padding: 1rem 0.5rem;
@@ -723,43 +757,47 @@ body {
   .control-panel {
     padding: 15px;
   }
-  
+
   .controls-section {
     padding: 10px 15px;
     gap: 10px;
   }
-  
+
   .control-group {
     gap: 8px;
   }
-  
+
   .control-group label {
     font-size: 11px;
   }
-  
+
   .control-btn {
     width: 20px;
     height: 20px;
     font-size: 12px;
   }
-  
+
   .speed-slider {
     width: 60px;
   }
-  
+
   .transcripts-container {
-    padding: 15px;
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    justify-content: center;
   }
-  
+
   .transcript-card {
     padding: 10px;
     gap: 10px;
   }
-  
+
   .transcript-header {
     gap: 8px;
   }
-  
+
   .speaker-dot {
     width: 6px;
     height: 6px;
